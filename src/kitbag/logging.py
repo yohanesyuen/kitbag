@@ -23,14 +23,15 @@ class VictoriaLogsHandler(logging.Handler):
     def __init__(
         self,
         url: str = DEFAULT_VL_URL,
-        stream_field: str = "module",
+        stream_fields: str | list[str] = "module",
         app: str | None = None,
     ):
         super().__init__()
         self._app = app
+        fields = stream_fields if isinstance(stream_fields, str) else ",".join(stream_fields)
         self._insert_url = (
             f"{url}/insert/jsonline"
-            f"?_stream_fields={stream_field}&_time_field=_time&_msg_field=_msg"
+            f"?_stream_fields={fields}&_time_field=_time&_msg_field=_msg"
         )
         # %(name)s is the logger's dotted name (e.g. "rektbot.plugins.summary") - rename
         # it to "module" in the shipped JSON since "name" reads as a generic/ambiguous key
@@ -64,12 +65,19 @@ def init_logging(
     url: str = DEFAULT_VL_URL,
     level: int = logging.INFO,
     app: str | None = None,
+    stream_fields: str | list[str] = "module",
 ) -> logging.Logger:
     """Return a logger named `name` that ships structured JSON logs to VictoriaLogs.
 
     `app` tags every shipped record with a static "app" field (e.g. "rektbot") so logs
     from multiple projects sharing one VictoriaLogs instance stay distinguishable. Defaults
     to `name` when omitted.
+
+    `stream_fields` controls which field(s) VictoriaLogs indexes/groups streams by (its
+    `_stream_fields` param) - pass a single field name or a list for multi-field grouping,
+    e.g. `["app", "module"]` to group by app first. Any field named here must actually be
+    present on emitted records (a rename_fields target, or an `extra=` key) or VictoriaLogs
+    just won't have anything to group on for it.
 
     Emission happens on a background thread via a queue, so callers never block
     on the HTTP round trip to the log sink.
@@ -79,7 +87,7 @@ def init_logging(
     log_queue: queue.Queue = queue.Queue(-1)
     logger.addHandler(logging.handlers.QueueHandler(log_queue))
     listener = logging.handlers.QueueListener(
-        log_queue, VictoriaLogsHandler(url, app=app or name)
+        log_queue, VictoriaLogsHandler(url, stream_fields=stream_fields, app=app or name)
     )
     listener.start()
     return logger
